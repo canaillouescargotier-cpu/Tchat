@@ -1,229 +1,95 @@
-<!DOCTYPE html>
-<html lang="fr">
+<!doctype html>
+<html>
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Chat Twitch & YouTube</title>
+  <meta charset="utf-8" />
+  <title>Overlay Chat Twitch+YouTube</title>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      background-color: #0e0e10;
-      color: #ffffff;
-      margin: 0;
-      padding: 20px;
-    }
-
-    .config-box {
-      background-color: #1f1f23;
-      padding: 15px;
-      border-radius: 8px;
-      margin-bottom: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      max-width: 600px;
-    }
-
-    input {
-      padding: 10px;
-      border-radius: 5px;
-      border: 1px solid #3a3a3d;
-      background-color: #0e0e10;
-      color: #fff;
-    }
-
-    button {
-      padding: 10px;
-      border-radius: 5px;
-      border: none;
-      background-color: #9146FF;
-      color: white;
-      font-weight: bold;
-      cursor: pointer;
-    }
-
-    button:hover {
-      background-color: #772ce8;
-    }
-
-    #chat-box {
-      height: 450px;
-      border: 1px solid #3a3a3d;
-      border-radius: 8px;
-      padding: 10px;
-      overflow-y: auto;
-      background-color: #18181b;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
-    .message {
-      padding: 8px;
-      border-radius: 4px;
-      background-color: #1f1f23;
-      word-break: break-word;
-    }
-
-    .platform-twitch {
-      color: #a970ff;
-      font-weight: bold;
-    }
-
-    .platform-yt {
-      color: #ff4e4e;
-      font-weight: bold;
-    }
-
-    .system {
-      color: #adadb8;
-      font-style: italic;
-    }
+    html,body { margin:0; padding:0; background:transparent; overflow:hidden; }
+    #chat { width:420px; max-height:720px; font-family: sans-serif; color:#fff; }
+    .msg { padding:6px 8px; margin:4px; border-radius:6px; background:rgba(0,0,0,0.45); }
+    .meta { font-size:12px; opacity:0.8; margin-bottom:4px; }
+    .text { font-size:14px; word-wrap:break-word; }
+    /* Pour rendre la fenêtre entièrement transparente dans OBS, laisse body background transparent */
   </style>
-
-  <!-- Charge la bibliothèque Twitch -->
-  <script src="https://cdn.jsdelivr.net/npm/tmi.js@1.8.5/125/tmi.min.js"></script>
 </head>
 <body>
+  <div id="chat"></div>
 
-  <h2>Chat Direct Multi-plateforme</h2>
-
-  <div class="config-box">
-    <h3>1. Twitch</h3>
-    <input type="text" id="twitch-channel" placeholder="Nom de chaîne Twitch (ex: kameto)">
-    <button onclick="connectTwitch()">Connecter Twitch</button>
-
-    <h3>2. YouTube (Pendant un Live)</h3>
-    <input type="text" id="yt-api-key" placeholder="Ta Clé API YouTube Data v3">
-    <input type="text" id="yt-video-id" placeholder="ID de la vidéo en Live (ex: dQw4w9WgXcQ)">
-    <button onclick="connectYouTube()">Connecter YouTube</button>
-  </div>
-
-  <div id="chat-box"></div>
-
+  <script src="https://unpkg.com/tmi.js@1.8.5/dist/tmi.min.js"></script>
   <script>
-    let twitchClient = null;
-    let ytInterval = null;
-    let nextPageToken = '';
+    // CONFIGURE ICI
+    const TWITCH_CHANNEL = "ton_channel_twitch"; // sans #
+    const TWITCH_NICK = "nom_du_bot"; // optionnel
+    const TWITCH_OAUTH = "oauth:XXXXXXXX"; // optionnel (recommandé)
+    const YOUTUBE_API_KEY = "TA_CLE_API_YOUTUBE";
+    const YOUTUBE_LIVE_CHAT_ID = "ID_DU_CHAT_EN_DIRECT"; // récupérer via videos.list?part=liveStreamingDetails&id=VID_ID
 
-    // --- LOGIQUE TWITCH ---
-    function connectTwitch() {
-      const channel = document.getElementById('twitch-channel').value.trim().toLowerCase();
-      if (!channel) return alert('Entre un nom de chaîne Twitch');
+    const chatEl = document.getElementById('chat');
 
-      if (twitchClient) {
-        twitchClient.disconnect();
-      }
+    function addMessage(source, user, text) {
+      const el = document.createElement('div');
+      el.className = 'msg';
+      el.innerHTML = `<div class="meta">${source} • <strong>${escapeHtml(user)}</strong></div><div class="text">${escapeHtml(text)}</div>`;
+      chatEl.appendChild(el);
+      // garde un nombre limité de messages
+      while (chatEl.children.length > 80) chatEl.removeChild(chatEl.firstChild);
+      // scroller vers le bas
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
 
-      twitchClient = new tmi.Client({
+    function escapeHtml(s) {
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    // --- Twitch (tmi.js) ---
+    (function initTwitch() {
+      const opts = {
         options: { debug: false },
-        channels: [channel]
-      });
-
-      twitchClient.connect()
-        .then(() => {
-          addMessage('Système', `Connecté au chat Twitch de ${channel}`, 'system');
-        })
-        .catch(err => {
-          console.error(err);
-          addMessage('Erreur', 'Impossible de se connecter à Twitch.', 'system');
-        });
-
-      twitchClient.on('message', (chan, tags, message, self) => {
-        const username = tags['display-name'] || tags.username;
-        addMessage(username, message, 'twitch');
-      });
-    }
-
-    // --- LOGIQUE YOUTUBE ---
-    async function connectYouTube() {
-      const apiKey = document.getElementById('yt-api-key').value.trim();
-      const videoId = document.getElementById('yt-video-id').value.trim();
-
-      if (!apiKey || !videoId) return alert('Entre la clé API et l\'ID de la vidéo YouTube');
-
-      if (ytInterval) clearInterval(ytInterval);
-
-      try {
-        // Step 1: Récupérer le liveChatId depuis l'ID de la vidéo
-        const res = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${videoId}&key=${apiKey}`);
-        const data = await res.json();
-
-        if (!data.items || data.items.length === 0) {
-          return alert('Vidéo YouTube introuvable.');
-        }
-
-        const liveChatId = data.items[0].liveStreamingDetails?.activeLiveChatId;
-        if (!liveChatId) {
-          return alert('Cette vidéo n\'est pas un live en cours ou le chat est désactivé.');
-        }
-
-        addMessage('Système', 'Connecté au chat YouTube !', 'system');
-
-        // Step 2: Boucle pour récupérer les messages en direct
-        fetchYouTubeMessages(liveChatId, apiKey);
-        ytInterval = setInterval(() => {
-          fetchYouTubeMessages(liveChatId, apiKey);
-        }, 5000); // Vérifie toutes les 5 secondes
-
-      } catch (err) {
-        console.error(err);
-        addMessage('Erreur', 'Erreur de connexion à YouTube.', 'system');
+        connection: { reconnect: true, secure: true },
+        channels: [TWITCH_CHANNEL]
+      };
+      if (TWITCH_OAUTH && TWITCH_NICK) {
+        opts.identity = { username: TWITCH_NICK, password: TWITCH_OAUTH };
       }
-    }
+      const client = new tmi.Client(opts);
+      client.connect().catch(console.error);
+      client.on('message', (channel, tags, message, self) => {
+        if (self) return;
+        addMessage('Twitch', tags['display-name'] || tags.username, message);
+      });
+    })();
 
-    async function fetchYouTubeMessages(liveChatId, apiKey) {
-      let url = `https://www.googleapis.com/youtube/v3/liveChat/messages?part=snippet,authorDetails&liveChatId=${liveChatId}&key=${apiKey}`;
-      if (nextPageToken) {
-        url += `&pageToken=${nextPageToken}`;
-      }
-
+    // --- YouTube polling ---
+    let ytNextPageToken = null;
+    async function pollYouTube() {
+      if (!YOUTUBE_API_KEY || !YOUTUBE_LIVE_CHAT_ID) return;
       try {
+        const url = new URL('https://www.googleapis.com/youtube/v3/liveChat/messages');
+        url.searchParams.set('liveChatId', YOUTUBE_LIVE_CHAT_ID);
+        url.searchParams.set('part', 'snippet,authorDetails');
+        url.searchParams.set('key', YOUTUBE_API_KEY);
+        if (ytNextPageToken) url.searchParams.set('pageToken', ytNextPageToken);
+
         const res = await fetch(url);
+        if (!res.ok) throw new Error('YT API ' + res.status);
         const data = await res.json();
-
-        if (data.nextPageToken) {
-          nextPageToken = data.nextPageToken;
-        }
-
         if (data.items) {
-          data.items.forEach(item => {
+          for (const item of data.items) {
             const author = item.authorDetails.displayName;
-            const message = item.snippet.displayMessage;
-            addMessage(author, message, 'yt');
-          });
+            const text = item.snippet.displayMessage;
+            addMessage('YouTube', author, text);
+          }
         }
-      } catch (err) {
-        console.error('Erreur récupération messages YouTube', err);
+        // récupérer le token et l'intervalle de poll recommandé
+        ytNextPageToken = data.nextPageToken || null;
+        const interval = (data.pollingIntervalMillis || 5000);
+        setTimeout(pollYouTube, interval);
+      } catch (e) {
+        console.error('YouTube fetch error', e);
+        setTimeout(pollYouTube, 8000);
       }
     }
-
-    // --- AFFICHAGE ---
-    function addMessage(author, text, platform) {
-      const chatBox = document.getElementById('chat-box');
-      const msgDiv = document.createElement('div');
-      msgDiv.className = 'message';
-
-      let tag = '[Twitch]';
-      let tagClass = 'platform-twitch';
-
-      if (platform === 'yt') {
-        tag = '[YouTube]';
-        tagClass = 'platform-yt';
-      } else if (platform === 'system') {
-        tag = '[Info]';
-        tagClass = 'system';
-      }
-
-      msgDiv.innerHTML = `<span class="${tagClass}">${tag}</span> <strong>${escapeHtml(author)} :</strong> ${escapeHtml(text)}`;
-      chatBox.appendChild(msgDiv);
-      chatBox.scrollTop = chatBox.scrollHeight;
-    }
-
-    function escapeHtml(text) {
-      return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    }
+    pollYouTube();
   </script>
 </body>
-  </html>
-    
+</html>
