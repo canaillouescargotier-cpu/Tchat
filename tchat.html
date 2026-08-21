@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Chat en direct - Twitch & YouTube</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #121212;
+      color: #ffffff;
+      margin: 0;
+      padding: 20px;
+    }
+
+    .form-container {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    input, button {
+      padding: 10px;
+      border-radius: 5px;
+      border: 1px solid #333;
+      background-color: #1e1e1e;
+      color: #fff;
+    }
+
+    button {
+      background-color: #9146FF;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    button:hover {
+      background-color: #772ce8;
+    }
+
+    #chat-box {
+      height: 400px;
+      border: 1px solid #333;
+      border-radius: 5px;
+      padding: 10px;
+      overflow-y: auto;
+      background-color: #18181b;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .message {
+      padding: 6px;
+      border-radius: 4px;
+      background-color: #26262c;
+      word-break: break-word;
+    }
+
+    .platform-twitch {
+      color: #a970ff;
+      font-weight: bold;
+    }
+
+    .username {
+      font-weight: bold;
+      color: #efeff1;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Chat multi-plateforme</h1>
+
+  <div class="form-container">
+    <input type="text" id="twitch-channel" placeholder="Nom de chaîne Twitch (ex: kameto)">
+    <button onclick="connectTwitch()">Connecter Twitch</button>
+  </div>
+
+  <div id="chat-box"></div>
+
+  <script>
+    let twitchSocket = null;
+
+    function connectTwitch() {
+      const channel = document.getElementById('twitch-channel').value.trim().toLowerCase();
+      if (!channel) return;
+
+      if (twitchSocket) {
+        twitchSocket.close();
+      }
+
+      // Connexion au WebSocket anonyme de Twitch
+      twitchSocket = new WebSocket('wss://irc-ws.chat.twitch.tv:443');
+
+      twitchSocket.onopen = () => {
+        twitchSocket.send('PASS oauth:nessuno');
+        twitchSocket.send('NICK justinfan12345'); // Identifiant anonyme
+        twitchSocket.send(`JOIN #${channel}`);
+        addMessage('Système', `Connecté au chat Twitch de ${channel}`, 'twitch');
+      };
+
+      twitchSocket.onmessage = (event) => {
+        const data = event.data;
+
+        // Réponse au PING pour maintenir la connexion active
+        if (data.startsWith('PING')) {
+          twitchSocket.send('PONG :tmi.twitch.tv');
+          return;
+        }
+
+        // Parsing du message IRC Twitch
+        if (data.includes('PRIVMSG')) {
+          const usernameMatch = data.match(/^:(\w+)!/);
+          const messageMatch = data.match(/PRIVMSG #[^ ]+ :(.*)$/);
+
+          if (usernameMatch && messageMatch) {
+            const username = usernameMatch[1];
+            const message = messageMatch[1].trim();
+            addMessage(username, message, 'twitch');
+          }
+        }
+      };
+
+      twitchSocket.onerror = () => {
+        addMessage('Système', 'Erreur de connexion Twitch', 'twitch');
+      };
+    }
+
+    function addMessage(author, text, platform) {
+      const chatBox = document.getElementById('chat-box');
+      const msgDiv = document.createElement('div');
+      msgDiv.className = 'message';
+
+      const tag = platform === 'twitch' ? '[Twitch]' : '[YouTube]';
+      const tagClass = platform === 'twitch' ? 'platform-twitch' : '';
+
+      msgDiv.innerHTML = `<span class="${tagClass}">${tag}</span> <span class="username">${author} :</span> ${escapeHtml(text)}`;
+      chatBox.appendChild(msgDiv);
+
+      // Defilement automatique vers le bas
+      chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    function escapeHtml(text) {
+      return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+  </script>
+</body>
+</html>
